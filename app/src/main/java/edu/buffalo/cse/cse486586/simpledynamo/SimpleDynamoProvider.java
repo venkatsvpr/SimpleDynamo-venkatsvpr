@@ -204,11 +204,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 
         if (myPort.equals(owners[0])) {
             put_data(key_val,data);
+            String message2 = send_message(owners[1], key_val + ":" + data, "force-put");
+            String message3 = send_message(owners[2], key_val + ":" + data, "force-put");
         }
         else {
             message = send_message(owners[0], key_val + ":" + data, "put");
         }
 
+        /* TODO-  may have send it anyways */
         if (message == null) {
             String message2 = send_message(owners[1], key_val + ":" + data, "force-put");
             String message3 = send_message(owners[2], key_val + ":" + data, "force-put");
@@ -261,13 +264,15 @@ public class SimpleDynamoProvider extends ContentProvider {
                     continue;
                 }
                 String ret = send_message(remote_port_arr[i], "*", "all");
-                if (!ret.equals("ack")) {
-                    Log.d("venkat", "peer responded to all with :" + ret);
-                    String[] split_tokens = ret.split("#");
-                    for (int j = 0; j < split_tokens.length; j++) {
-                        String[] kv_tokens = split_tokens[j].split(":");
-                        if (kv_tokens.length == 2) {
-                            mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                if (ret != null) {
+                    if (!ret.equals("ack")) {
+                        Log.d("venkat", "peer responded to all with :" + ret);
+                        String[] split_tokens = ret.split("#");
+                        for (int j = 0; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                            }
                         }
                     }
                 }
@@ -324,7 +329,7 @@ public class SimpleDynamoProvider extends ContentProvider {
         protected Void doInBackground(ServerSocket... sockets) {
             try {
                 String mess2 = "hello";
-                //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, mess2, myPort);
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, mess2, myPort);
 
                 ServerSocket serverSocket = sockets[0];
                 Socket accept = null;
@@ -342,11 +347,6 @@ public class SimpleDynamoProvider extends ContentProvider {
 
                     Log.d("venkat", " Message is : " + message);
                     if (split_tokens[0].equals("put")) {
-
-                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
-                        out_print.writeUTF("ack");
-                        out_print.flush();
-
                         String keyvalue = split_tokens[1];
                         String[] new_split_tokens = keyvalue.split(":");
                         String key = new_split_tokens[0];
@@ -358,6 +358,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 
                         send_message(nextpeer[0], split_tokens[1], "force-put");
                         send_message(nextpeer[1], split_tokens[1], "force-put");
+
+                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
+                        out_print.writeUTF("ack");
+                        out_print.flush();
+
 
                     } else if (split_tokens[0].equals("force-put")) {
                         String keyvalue = split_tokens[1];
@@ -447,6 +452,7 @@ public class SimpleDynamoProvider extends ContentProvider {
                         if (outString == null) {
                             outString = "ack";
                         }
+                        Log.d("venkat","going to return with : "+outString);
                         DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
                         out_print.writeUTF(outString);
                         out_print.flush();
@@ -624,7 +630,7 @@ public class SimpleDynamoProvider extends ContentProvider {
             Log.d("venkat", "send message: port: " + port + " selection: " + selection + " method:" + method);
             Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                     Integer.parseInt(port));
-            socket.setSoTimeout(1500);
+            socket.setSoTimeout(1000);
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             out.writeUTF(method + "#" + selection + "#" + myPort);
             out.flush();
@@ -657,7 +663,7 @@ public class SimpleDynamoProvider extends ContentProvider {
         protected Void doInBackground(String... msgs) {
 
             try {
-                Thread.sleep(200);
+                Thread.sleep(3000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -693,7 +699,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 
             String[] next_nodes = get2next();
             Log.d("venkat"," Gettting values from "+next_nodes[0]+"using get range");
-            retval = client_send_message(next_nodes[0], myPort + ":" + next_nodes[0], "get-range");
+            retval = client_send_message(next_nodes[0], prev_nodes[0] + ":" + myPort, "get-range");
             if (retval != null) {
                 String []split_tokens = retval.split("#");
                 for (int j = 0; j < split_tokens.length; j++) {
@@ -711,7 +717,7 @@ public class SimpleDynamoProvider extends ContentProvider {
                 Log.d("venkat", "send message: port: " + port + " selection: " + selection + " method:" + method);
                 Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                         Integer.parseInt(port));
-                socket.setSoTimeout(1500);
+                socket.setSoTimeout(1000);
                 DataOutputStream out = new DataOutputStream(socket.getOutputStream());
                 out.writeUTF(method + "#" + selection + "#" + myPort);
                 out.flush();
