@@ -13,8 +13,7 @@ public class SimpleDynamoActivity extends Activity {
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_simple_dynamo);
-    
-		TextView tv = (TextView) findViewById(R.id.textView1);
+        TextView tv = (TextView) findViewById(R.id.textView1);
         tv.setMovementMethod(new ScrollingMovementMethod());
 	}
 

@@ -21,6 +21,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Formatter;
 import java.util.HashMap;
+import java.util.concurrent.locks.Lock;
 
 import android.content.ContentProvider;
 import android.content.ContentResolver;
@@ -34,12 +35,15 @@ import android.telephony.TelephonyManager;
 import android.util.Log;
 
 public class SimpleDynamoProvider extends ContentProvider {
+    static Object querylock = new Object();
+    static boolean queryproceed = false;
     String myPort = null;
     Integer myIndex = -1;
+    static int bulk_put_count =3;
     static HashMap<String, String> avdname = new HashMap<String, String>();
     static final String[] remote_port_arr = new String[]{"11124", "11112", "11108", "11116", "11120"};
     static final String[] sorted_hash_arr = new String[]{"11124", "11112", "11108", "11116", "11120"};
-            /*new String[]{"11124", "11112", "11108", "11116", "11120"}; */
+    /*new String[]{"11124", "11112", "11108", "11116", "11120"}; */
     /* References:
        1) My Code imported from simpledht
        2) Oracle/Android documentation
@@ -136,6 +140,22 @@ public class SimpleDynamoProvider extends ContentProvider {
 
         return mCursor;
     }
+    private boolean getMyValuesCount() {
+        File dir = getContext().getFilesDir();
+        File[] files = dir.listFiles();
+
+        for (File file : files) {
+            if (file.isFile()) {
+                Log.d("venkat"," getmyvaluescount returning true");
+                return true;
+            }
+        }
+
+
+        Log.d("venkat"," getmyvaluescount returning false");
+        return false;
+    }
+
 
     private void deleteMyValues() {
         File dir = getContext().getFilesDir();
@@ -151,6 +171,19 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
+        synchronized (querylock) {
+            Log.d("venkat","queryproceed is ... "+queryproceed);
+            if (queryproceed == false) {
+                try {
+                    Log.d("venkat"," waiting for lock ..... ");
+                    querylock.wait();
+                    Log.d("venkat"," lock obtained ..... ");
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
         // TODO Auto-generated method stub
         if (selection.equals("@")) {
             deleteMyValues();
@@ -174,10 +207,9 @@ public class SimpleDynamoProvider extends ContentProvider {
 
             String message = null;
             message = send_message(owners[0], selection, "delete");
-            if (message == null) {
-                String message2 = send_message(owners[1], selection, "force-delete");
-                String message3 = send_message(owners[2], selection, "force-delete");
-            }
+            String message2 = send_message(owners[1], selection, "force-delete");
+            String message3 = send_message(owners[2], selection, "force-delete");
+
         }
         return 0;
     }
@@ -190,6 +222,19 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     @Override
     public Uri insert(Uri uri, ContentValues values) {
+        synchronized (querylock) {
+            Log.d("venkat","queryproceed is ... "+queryproceed);
+            if (queryproceed == false) {
+                try {
+                    Log.d("venkat"," waiting for lock ..... ");
+                    querylock.wait();
+                    Log.d("venkat"," lock obtained ..... ");
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
         String key_val = values.getAsString("key");
         String data = values.getAsString("value");
         String[] owners = new String[0];
@@ -203,17 +248,23 @@ public class SimpleDynamoProvider extends ContentProvider {
         String message = null;
 
         if (myPort.equals(owners[0])) {
-            put_data(key_val,data);
-            String message2 = send_message(owners[1], key_val + ":" + data, "force-put");
-            String message3 = send_message(owners[2], key_val + ":" + data, "force-put");
+            put_data(key_val, data);
         }
         else {
             message = send_message(owners[0], key_val + ":" + data, "put");
         }
 
-        /* TODO-  may have send it anyways */
-        if (message == null) {
+        if (myPort.equals(owners[1])) {
+            put_data(key_val, data);
+        }
+        else {
             String message2 = send_message(owners[1], key_val + ":" + data, "force-put");
+        }
+
+        if (myPort.equals(owners[2])) {
+            put_data(key_val,data);
+        }
+        else {
             String message3 = send_message(owners[2], key_val + ":" + data, "force-put");
         }
         return uri;
@@ -251,7 +302,21 @@ public class SimpleDynamoProvider extends ContentProvider {
     @Override
     public Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder) {
+
         // TODO Auto-generated method stub
+        synchronized (querylock) {
+            Log.d("venkat","queryproceed is ... "+queryproceed);
+            if (queryproceed == false) {
+                try {
+                    Log.d("venkat"," waiting for lock ..... ");
+                    querylock.wait();
+                    Log.d("venkat"," lock obtained ..... ");
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
         MatrixCursor mCursor = null;
         mCursor = new MatrixCursor(new String[]{"key", "value"});
 
@@ -291,14 +356,50 @@ public class SimpleDynamoProvider extends ContentProvider {
                     ret = send_message(owners[0], selection, "get");
                 }
             }
+            String value = null;
             if (!ret.equals("ack")) {
                 String[] split_tokens = ret.split("#");
                 String[] kv_tokens = split_tokens[1].split(":");
                 if (kv_tokens.length == 2) {
                     Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
-                    mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                    if (!kv_tokens[1].equals("null")) {
+                        Log.d("venkat","keys value not equal to null ");
+                        value = kv_tokens[1];
+                        mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                        return mCursor;
+                    }
                 }
             }
+            ret = send_message(owners[1], selection, "get");
+            if (!ret.equals("ack")) {
+                String[] split_tokens = ret.split("#");
+                String[] kv_tokens = split_tokens[1].split(":");
+                if (kv_tokens.length == 2) {
+                    Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
+                    if (!kv_tokens[1].equals("null")) {
+                        Log.d("venkat","keys value not equal to null ");
+                        value = kv_tokens[1];
+                        mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                        return mCursor;
+                    }
+                }
+            }
+
+            ret = send_message(owners[2], selection, "get");
+            if (!ret.equals("ack")) {
+                String[] split_tokens = ret.split("#");
+                String[] kv_tokens = split_tokens[1].split(":");
+                if (kv_tokens.length == 2) {
+                    Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
+                    if (!kv_tokens[1].equals("null")) {
+                        Log.d("venkat","keys value not equal to null ");
+                        value = kv_tokens[1];
+                        mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                        return mCursor;
+                    }
+                }
+            }
+            mCursor.addRow(new String[]{selection, null});
         }
         return mCursor;
     }
@@ -328,9 +429,30 @@ public class SimpleDynamoProvider extends ContentProvider {
         @Override
         protected Void doInBackground(ServerSocket... sockets) {
             try {
-                String mess2 = "hello";
-                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, mess2, myPort);
+                if (getMyValuesCount()) {
+                    deleteMyValues();
+                    Log.d("venkat","going to do initi data recovery");
+                    String[] prev_nodes = get2prev();
+                    String[] next_nodes = get2next();
 
+                    String retval = null;
+                    retval = send_message(next_nodes[1], prev_nodes[0] + ":" + myPort, "get-range");
+                    retval = send_message(next_nodes[0], prev_nodes[0] + ":" + myPort, "get-range");
+                    retval = send_message(prev_nodes[0], "*", "get-local");
+                    retval = send_message(prev_nodes[1], "*", "get-local");
+                }
+                else {
+                    synchronized (querylock) {
+                        queryproceed = true;
+                    }
+                }
+                //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, mess2, myPort);
+                 /*
+                 try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } */
                 ServerSocket serverSocket = sockets[0];
                 Socket accept = null;
                 while (true) {
@@ -347,6 +469,9 @@ public class SimpleDynamoProvider extends ContentProvider {
 
                     Log.d("venkat", " Message is : " + message);
                     if (split_tokens[0].equals("put")) {
+                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
+                        out_print.writeUTF("ack");
+                        out_print.flush();
                         String keyvalue = split_tokens[1];
                         String[] new_split_tokens = keyvalue.split(":");
                         String key = new_split_tokens[0];
@@ -358,10 +483,6 @@ public class SimpleDynamoProvider extends ContentProvider {
 
                         send_message(nextpeer[0], split_tokens[1], "force-put");
                         send_message(nextpeer[1], split_tokens[1], "force-put");
-
-                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
-                        out_print.writeUTF("ack");
-                        out_print.flush();
 
 
                     } else if (split_tokens[0].equals("force-put")) {
@@ -421,7 +542,16 @@ public class SimpleDynamoProvider extends ContentProvider {
                         String[] nextpeer = get2next();
                         send_message(nextpeer[0], split_tokens[1], "force-delete");
                         send_message(nextpeer[1], split_tokens[1], "force-delete");
+
                     } else if (split_tokens[0].equals("get-range")) {
+                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
+                        out_print.writeUTF("ack");
+                        out_print.flush();
+
+                        Log.d ("venkat", "processing  get-range"+split_tokens[2]);
+
+
+                        String to = split_tokens[2];
                         String rangevalue = split_tokens[1];
                         String[] new_split_tokens = rangevalue.split(":");
                         String start = new_split_tokens[0];
@@ -450,13 +580,18 @@ public class SimpleDynamoProvider extends ContentProvider {
                             }
                         }
                         if (outString == null) {
-                            outString = "ack";
+                            outString = "ack#";
                         }
-                        Log.d("venkat","going to return with : "+outString);
-                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
-                        out_print.writeUTF(outString);
-                        out_print.flush();
+
+                        outString = to+"!"+"bulk-put#"+outString+myPort;
+                        new BulkSend().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, outString, myPort);
                     } else if (split_tokens[0].equals("get-local")) {
+                        Log.d ("venkat", "processing  get-local"+split_tokens[2]);
+                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
+                        out_print.writeUTF("ack");
+                        out_print.flush();
+
+                        String to = split_tokens[2];
                         String outString = "";
                         File dir = getContext().getFilesDir();
                         File[] files = dir.listFiles();
@@ -483,13 +618,34 @@ public class SimpleDynamoProvider extends ContentProvider {
                             }
                         }
                         if (outString == null) {
-                            outString = "ack";
+                            outString = "ack#";
+                        }
+
+                        outString = to+"!"+"bulk-put#"+outString+myPort;
+                        new BulkSend().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, outString, myPort);
+                    }
+                    else if (split_tokens[0].equals("bulk-put")) {
+                        for (int j = 1; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                Log.d("venkat","key :"+kv_tokens[0]+" value :"+kv_tokens[1]);
+                                remove_data(kv_tokens[0]);
+                                put_data(kv_tokens[0], kv_tokens[1]);
+                            }
                         }
                         DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
-                        out_print.writeUTF(outString);
+                        out_print.writeUTF("ack");
                         out_print.flush();
-
+                        bulk_put_count--;
+                        if (bulk_put_count <= 0) {
+                            synchronized (querylock) {
+                                queryproceed = true;
+                                querylock.notifyAll();
+                            }
+                            bulk_put_count = 3;
+                        }
                     }
+
                 }
             } catch (SocketTimeoutException e) {
                 Log.e("venkat", "ClientTask timeout");
@@ -501,7 +657,6 @@ public class SimpleDynamoProvider extends ContentProvider {
             } catch (IOException e) {
                 Log.e("venkat", "ClientTask socket IOException");
             }
-
             String output_message = "summa";
             publishProgress(new String[]{output_message});
             return null;
@@ -630,7 +785,7 @@ public class SimpleDynamoProvider extends ContentProvider {
             Log.d("venkat", "send message: port: " + port + " selection: " + selection + " method:" + method);
             Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                     Integer.parseInt(port));
-            socket.setSoTimeout(1000);
+            socket.setSoTimeout(500);
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             out.writeUTF(method + "#" + selection + "#" + myPort);
             out.flush();
@@ -644,7 +799,7 @@ public class SimpleDynamoProvider extends ContentProvider {
             socket.close();
             Log.d("venkat", " myport: " + myPort);
             return message;
-        } catch (SocketTimeoutException e) {
+        }  catch (SocketTimeoutException e) {
             Log.e("venkat", "ClientTask timeout");
 
         } catch (EOFException e) {
@@ -653,6 +808,8 @@ public class SimpleDynamoProvider extends ContentProvider {
             Log.e("venkat", "stream corrupt");
         } catch (IOException e) {
             Log.e("venkat", "ClientTask socket IOException");
+        } catch (RuntimeException e) {
+            Log.e("venkat", "runtime expception have to handle it here");
         }
 
         return null;
@@ -662,54 +819,25 @@ public class SimpleDynamoProvider extends ContentProvider {
         @Override
         protected Void doInBackground(String... msgs) {
 
+            //deleteMyValues();
+/*
             try {
-                Thread.sleep(3000);
+                Thread.sleep(1500);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
+  */
             String[] prev_nodes = get2prev();
             String retval = null;
 
             Log.d("venkat","getting local data from :"+prev_nodes[0]);
             retval = client_send_message(prev_nodes[0], "*", "get-local");
-            if (retval != null) {
-                String[] split_tokens = retval.split("#");
-                for (int j = 0; j < split_tokens.length; j++) {
-                    String[] kv_tokens = split_tokens[j].split(":");
-                    if (kv_tokens.length == 2) {
-                        Log.d("venkat","key :"+kv_tokens[0]+" value :"+kv_tokens[1]);
-                        put_data(kv_tokens[0], kv_tokens[1]);
-                    }
-                }
-            }
-
-
             retval = client_send_message(prev_nodes[1], "*", "get-local");
-            Log.d("venkat"," Gettting values from "+prev_nodes[1]+" using get local");
-            if (retval != null) {
-                String []split_tokens = retval.split("#");
-                for (int j = 0; j < split_tokens.length; j++) {
-                    String[] kv_tokens = split_tokens[j].split(":");
-                    if (kv_tokens.length == 2) {
-                        Log.d("venkat","key :"+kv_tokens[0]+" value :"+kv_tokens[1]);
-                        put_data(kv_tokens[0], kv_tokens[1]);
-                    }
-                }
-            }
 
             String[] next_nodes = get2next();
-            Log.d("venkat"," Gettting values from "+next_nodes[0]+"using get range");
             retval = client_send_message(next_nodes[0], prev_nodes[0] + ":" + myPort, "get-range");
-            if (retval != null) {
-                String []split_tokens = retval.split("#");
-                for (int j = 0; j < split_tokens.length; j++) {
-                    String[] kv_tokens = split_tokens[j].split(":");
-                    if (kv_tokens.length == 2) {
-                        Log.d("venkat","key :"+kv_tokens[0]+" value :"+kv_tokens[1]);
-                        put_data(kv_tokens[0], kv_tokens[1]);
-                    }
-                }
-            }
+            retval = client_send_message(next_nodes[1], prev_nodes[0] + ":" + myPort, "get-range");
+
             return null;
         }
         private String client_send_message(String port, String selection, String method) {
@@ -717,9 +845,55 @@ public class SimpleDynamoProvider extends ContentProvider {
                 Log.d("venkat", "send message: port: " + port + " selection: " + selection + " method:" + method);
                 Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                         Integer.parseInt(port));
-                socket.setSoTimeout(1000);
+                socket.setSoTimeout(200);
                 DataOutputStream out = new DataOutputStream(socket.getOutputStream());
                 out.writeUTF(method + "#" + selection + "#" + myPort);
+                out.flush();
+
+                DataInputStream in = new DataInputStream(socket.getInputStream());
+                String message = null;
+                message = in.readUTF();
+                Log.d("venkat", "Read ack reply:" + message);
+                out.close();
+                in.close();
+                socket.close();
+                Log.d("venkat", " myport: " + myPort);
+                return message;
+            } catch (SocketTimeoutException e) {
+                Log.e("venkat", "ClientTask timeout");
+
+            } catch (EOFException e) {
+                Log.e("venkat", "ClientTask eof");
+            } catch (StreamCorruptedException e) {
+                Log.e("venkat", "stream corrupt");
+            } catch (IOException e) {
+                Log.e("venkat", "ClientTask socket IOException");
+            } catch (RuntimeException e) {
+                Log.d ("venkat", "runtime excpetion.. dont panic..  ##change me afterwards ");
+            }
+
+            return null;
+        }
+    }
+
+
+    private class BulkSend extends AsyncTask<String, Void, Void> {
+        @Override
+        protected Void doInBackground(String... msgs) {
+            String message = msgs[0];
+            Log.d("venkat"," in bulk send "+message);
+            String[] split_tokens = message.split("!");
+            String retval = bulk_send_message(split_tokens[0], split_tokens[1]);
+            return null;
+        }
+        private String bulk_send_message(String port, String selection) {
+            try {
+                Log.d("venkat","sending message to peer "+port);
+                Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                        Integer.parseInt(port));
+                socket.setSoTimeout(200);
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                out.writeUTF(selection + "#" + myPort);
                 out.flush();
 
                 DataInputStream in = new DataInputStream(socket.getInputStream());
