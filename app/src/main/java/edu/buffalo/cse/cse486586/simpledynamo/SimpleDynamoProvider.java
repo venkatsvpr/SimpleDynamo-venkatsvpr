@@ -172,7 +172,7 @@ public class SimpleDynamoProvider extends ContentProvider {
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
         synchronized (querylock) {
-            Log.d("venkat","queryproceed is ... "+queryproceed);
+            Log.d("venkat"," in delete queryproceed is ... "+queryproceed);
             if (queryproceed == false) {
                 try {
                     Log.d("venkat"," waiting for lock ..... ");
@@ -222,19 +222,6 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     @Override
     public Uri insert(Uri uri, ContentValues values) {
-        synchronized (querylock) {
-            Log.d("venkat","queryproceed is ... "+queryproceed);
-            if (queryproceed == false) {
-                try {
-                    Log.d("venkat"," waiting for lock ..... ");
-                    querylock.wait();
-                    Log.d("venkat"," lock obtained ..... ");
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-
         String key_val = values.getAsString("key");
         String data = values.getAsString("value");
         String[] owners = new String[0];
@@ -349,53 +336,96 @@ public class SimpleDynamoProvider extends ContentProvider {
             } catch (NoSuchAlgorithmException e) {
                 e.printStackTrace();
             }
-            String ret = send_message(owners[2], selection, "get");
-            if (ret == null) {
-                ret = send_message(owners[1], selection, "get");
-                if (ret == null) {
-                    ret = send_message(owners[0], selection, "get");
-                }
-            }
+
             String value = null;
-            if (!ret.equals("ack")) {
-                String[] split_tokens = ret.split("#");
-                String[] kv_tokens = split_tokens[1].split(":");
-                if (kv_tokens.length == 2) {
-                    Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
-                    if (!kv_tokens[1].equals("null")) {
-                        Log.d("venkat","keys value not equal to null ");
-                        value = kv_tokens[1];
-                        mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
-                        return mCursor;
+            String ret = null;
+            if (!owners[2].equals(myPort)) {
+                ret = send_message(owners[2], selection, "get");
+                if (ret != null) {
+                    if (!ret.equals("ack")) {
+                        String[] split_tokens = ret.split("#");
+                        String[] kv_tokens = split_tokens[1].split(":");
+                        if (kv_tokens.length == 2) {
+                            Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
+                            if (!kv_tokens[1].equals("null")) {
+                            /* think of a situation when 2 is old.. and 1 is new..how will you replicate */
+                                Log.d("venkat", "keys value not equal to null ");
+                                value = kv_tokens[1];
+                                mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                                return mCursor;
+                            }
+                        }
                     }
                 }
             }
+            else {
+                if (containskey(selection)) {
+                    value = get_data(selection);
+                    mCursor.addRow(new String[]{selection,value});
+                    return mCursor;
+                }
+            }
+
+
+            ret = null;
+            if (!owners[1].equals(myPort)) {
+                ret = send_message(owners[1], selection, "get");
+            }
+            else {
+                if (containskey(selection)) {
+                    value = get_data(selection);
+                    send_message(owners[2], selection + ":" + value, "force-put");
+                    send_message(owners[0], selection + ":" + value, "force-put");
+                    mCursor.addRow(new String[]{selection, value});
+                    return mCursor;
+                }
+            }
+
             ret = send_message(owners[1], selection, "get");
-            if (!ret.equals("ack")) {
-                String[] split_tokens = ret.split("#");
-                String[] kv_tokens = split_tokens[1].split(":");
-                if (kv_tokens.length == 2) {
-                    Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
-                    if (!kv_tokens[1].equals("null")) {
-                        Log.d("venkat","keys value not equal to null ");
-                        value = kv_tokens[1];
-                        mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
-                        return mCursor;
+            if (ret != null) {
+                if (!ret.equals("ack")) {
+                    String[] split_tokens = ret.split("#");
+                    String[] kv_tokens = split_tokens[1].split(":");
+                    if (kv_tokens.length == 2) {
+                        Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
+                        if (!kv_tokens[1].equals("null")) {
+                            send_message(owners[2], kv_tokens[0] + ":" + kv_tokens[1], "force-put");
+                            send_message(owners[0], kv_tokens[0] + ":" + kv_tokens[1], "force-put");
+                            Log.d("venkat", "keys value not equal to null ");
+                            value = kv_tokens[1];
+                            mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                            return mCursor;
+                        }
                     }
                 }
             }
 
-            ret = send_message(owners[2], selection, "get");
-            if (!ret.equals("ack")) {
-                String[] split_tokens = ret.split("#");
-                String[] kv_tokens = split_tokens[1].split(":");
-                if (kv_tokens.length == 2) {
-                    Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
-                    if (!kv_tokens[1].equals("null")) {
-                        Log.d("venkat","keys value not equal to null ");
-                        value = kv_tokens[1];
-                        mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
-                        return mCursor;
+            if (!owners[0].equals(myPort)) {
+                ret = send_message(owners[0], selection, "get");
+            }
+            else {
+                if (containskey(selection)) {
+                    value = get_data(selection);
+                    send_message(owners[2], selection + ":" + value, "force-put");
+                    send_message(owners[0], selection + ":" + value, "force-put");
+                    mCursor.addRow(new String[]{selection, value});
+                    return mCursor;
+                }
+            }
+            if (ret != null) {
+                if (!ret.equals("ack")) {
+                    String[] split_tokens = ret.split("#");
+                    String[] kv_tokens = split_tokens[1].split(":");
+                    if (kv_tokens.length == 2) {
+                        Log.d("venkat", " key :" + kv_tokens[0] + " value:" + kv_tokens[1]);
+                        if (!kv_tokens[1].equals("null")) {
+                            send_message(owners[2], kv_tokens[0] + ":" + kv_tokens[1], "force-put");
+                            send_message(owners[1], kv_tokens[0] + ":" + kv_tokens[1], "force-put");
+                            Log.d("venkat", "keys value not equal to null ");
+                            value = kv_tokens[1];
+                            mCursor.addRow(new String[]{kv_tokens[0], kv_tokens[1]});
+                            return mCursor;
+                        }
                     }
                 }
             }
@@ -437,14 +467,102 @@ public class SimpleDynamoProvider extends ContentProvider {
 
                     String retval = null;
                     retval = send_message(next_nodes[1], prev_nodes[0] + ":" + myPort, "get-range");
-                    retval = send_message(next_nodes[0], prev_nodes[0] + ":" + myPort, "get-range");
-                    retval = send_message(prev_nodes[0], "*", "get-local");
-                    retval = send_message(prev_nodes[1], "*", "get-local");
-                }
-                else {
-                    synchronized (querylock) {
-                        queryproceed = true;
+                    if (retval != null) {
+                        String []split_tokens = retval.split("#");
+                        for (int j = 0; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                if (kv_tokens[1] != null){
+                                    Log.d("venkat", "key :" + kv_tokens[0] + " value :" + kv_tokens[1]);
+                                    put_data(kv_tokens[0], kv_tokens[1]);
+                                }
+                            }
+                        }
                     }
+
+                    retval = send_message(next_nodes[0], prev_nodes[0] + ":" + myPort, "get-range");
+                    if (retval != null) {
+                        String []split_tokens = retval.split("#");
+                        for (int j = 0; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                if (kv_tokens[1] != null){
+                                    Log.d("venkat", "key :" + kv_tokens[0] + " value :" + kv_tokens[1]);
+                                    put_data(kv_tokens[0], kv_tokens[1]);
+                                }
+                            }
+                        }
+                    }
+
+                    retval = send_message(next_nodes[0], prev_nodes[1] + ":" + prev_nodes[0], "get-range");
+                    if (retval != null) {
+                        String []split_tokens = retval.split("#");
+                        for (int j = 0; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                if (kv_tokens[1] != null){
+                                    Log.d("venkat", "key :" + kv_tokens[0] + " value :" + kv_tokens[1]);
+                                    put_data(kv_tokens[0], kv_tokens[1]);
+                                }
+                            }
+                        }
+                    }
+
+
+                    retval = send_message(prev_nodes[0], prev_nodes[1] + ":" + prev_nodes[0], "get-range");
+                    if (retval != null) {
+                        String []split_tokens = retval.split("#");
+                        for (int j = 0; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                if (kv_tokens[1] != null){
+                                    Log.d("venkat", "key :" + kv_tokens[0] + " value :" + kv_tokens[1]);
+                                    put_data(kv_tokens[0], kv_tokens[1]);
+                                }
+                            }
+                        }
+                    }
+
+
+
+                    retval = send_message(prev_nodes[0], next_nodes[1] + ":" + prev_nodes[1], "get-range");
+                    if (retval != null) {
+                        String []split_tokens = retval.split("#");
+                        for (int j = 0; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                if (kv_tokens[1] != null){
+                                    Log.d("venkat", "key :" + kv_tokens[0] + " value :" + kv_tokens[1]);
+                                    put_data(kv_tokens[0], kv_tokens[1]);
+                                }
+                            }
+                        }
+                    }
+
+
+                    retval = send_message(prev_nodes[1], next_nodes[1] + ":" + prev_nodes[1], "get-range");
+                    if (retval != null) {
+                        String []split_tokens = retval.split("#");
+                        for (int j = 0; j < split_tokens.length; j++) {
+                            String[] kv_tokens = split_tokens[j].split(":");
+                            if (kv_tokens.length == 2) {
+                                if (kv_tokens[1] != null){
+                                    Log.d("venkat", "key :" + kv_tokens[0] + " value :" + kv_tokens[1]);
+                                    put_data(kv_tokens[0], kv_tokens[1]);
+                                }
+                            }
+                        }
+                    }
+
+
+
+                    Log.d("venkat","done with init syncup");
+
+
+                }
+                synchronized (querylock) {
+                    queryproceed = true;
+                    querylock.notifyAll();
                 }
                 //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, mess2, myPort);
                  /*
@@ -544,13 +662,7 @@ public class SimpleDynamoProvider extends ContentProvider {
                         send_message(nextpeer[1], split_tokens[1], "force-delete");
 
                     } else if (split_tokens[0].equals("get-range")) {
-                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
-                        out_print.writeUTF("ack");
-                        out_print.flush();
-
                         Log.d ("venkat", "processing  get-range"+split_tokens[2]);
-
-
                         String to = split_tokens[2];
                         String rangevalue = split_tokens[1];
                         String[] new_split_tokens = rangevalue.split(":");
@@ -582,15 +694,14 @@ public class SimpleDynamoProvider extends ContentProvider {
                         if (outString == null) {
                             outString = "ack#";
                         }
-
-                        outString = to+"!"+"bulk-put#"+outString+myPort;
-                        new BulkSend().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, outString, myPort);
-                    } else if (split_tokens[0].equals("get-local")) {
-                        Log.d ("venkat", "processing  get-local"+split_tokens[2]);
                         DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
-                        out_print.writeUTF("ack");
+                        out_print.writeUTF(outString);
                         out_print.flush();
 
+                        //outString = to+"!"+"bulk-put#"+outString+myPort;
+                        //new BulkSend().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, outString, myPort);
+                    } else if (split_tokens[0].equals("get-local")) {
+                        Log.d ("venkat", "processing  get-local"+split_tokens[2]);
                         String to = split_tokens[2];
                         String outString = "";
                         File dir = getContext().getFilesDir();
@@ -620,9 +731,12 @@ public class SimpleDynamoProvider extends ContentProvider {
                         if (outString == null) {
                             outString = "ack#";
                         }
+                        DataOutputStream out_print = new DataOutputStream(accept.getOutputStream());
+                        out_print.writeUTF(outString);
+                        out_print.flush();
 
-                        outString = to+"!"+"bulk-put#"+outString+myPort;
-                        new BulkSend().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, outString, myPort);
+                        //outString = to+"!"+"bulk-put#"+outString+myPort;
+                        //new BulkSend().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, outString, myPort);
                     }
                     else if (split_tokens[0].equals("bulk-put")) {
                         for (int j = 1; j < split_tokens.length; j++) {
@@ -785,7 +899,7 @@ public class SimpleDynamoProvider extends ContentProvider {
             Log.d("venkat", "send message: port: " + port + " selection: " + selection + " method:" + method);
             Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                     Integer.parseInt(port));
-            socket.setSoTimeout(500);
+            socket.setSoTimeout(750);
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             out.writeUTF(method + "#" + selection + "#" + myPort);
             out.flush();
