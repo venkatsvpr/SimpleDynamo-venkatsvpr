@@ -222,6 +222,18 @@ public class SimpleDynamoProvider extends ContentProvider {
 
     @Override
     public Uri insert(Uri uri, ContentValues values) {
+        synchronized (querylock) {
+            Log.d("venkat"," in delete queryproceed is ... "+queryproceed);
+            if (queryproceed == false) {
+                try {
+                    Log.d("venkat"," waiting for lock ..... ");
+                    querylock.wait();
+                    Log.d("venkat"," lock obtained ..... ");
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
         String key_val = values.getAsString("key");
         String data = values.getAsString("value");
         String[] owners = new String[0];
